@@ -24,5 +24,23 @@
       "app-test",
       "APP_TEST_PACKAGE=hyper-service-ipc"
     ]
-  ]
+  ],
+  "cargo_context": {
+    "Cargo.toml": {
+      "workspace": null,
+      "membership": "../../app",
+      "dependency_paths": {},
+      "inherited_dependencies": {
+        "/dependencies/hyper-os": {
+          "workspace": true
+        },
+        "/dependencies/serde": {
+          "workspace": true
+        },
+        "/dependencies/serde_json": {
+          "workspace": true
+        }
+      }
+    }
+  }
 }
