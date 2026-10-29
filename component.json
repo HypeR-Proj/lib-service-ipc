@@ -1,20 +1,13 @@
 {
   "version": 1,
-  "name": "service-ipc",
+  "name": "lib-service-ipc",
   "kind": "library",
   "origin": {
     "repository": "https://github.com/roolrz/HypeR",
     "commit": "8d42d047058a2b58a291803700e86487fb723f7a"
   },
-  "sources": {
-    "Cargo.toml": "lib/service-ipc/Cargo.toml",
-    "src/lib.rs": "lib/service-ipc/src/lib.rs"
-  },
   "SPDX-FileCopyrightText": "2026 roolrz",
   "SPDX-License-Identifier": "Apache-2.0",
-  "mounts": {
-    "": "lib/service-ipc"
-  },
   "packages": [
     "hyper-service-ipc"
   ],
@@ -24,23 +17,5 @@
       "app-test",
       "APP_TEST_PACKAGE=hyper-service-ipc"
     ]
-  ],
-  "cargo_context": {
-    "Cargo.toml": {
-      "workspace": null,
-      "membership": "../../app",
-      "dependency_paths": {},
-      "inherited_dependencies": {
-        "/dependencies/hyper-os": {
-          "workspace": true
-        },
-        "/dependencies/serde": {
-          "workspace": true
-        },
-        "/dependencies/serde_json": {
-          "workspace": true
-        }
-      }
-    }
-  }
+  ]
 }
