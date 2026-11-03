@@ -17,6 +17,8 @@ pub enum Admission<T> {
 pub enum Rejection {
     Transfer(ReceiveRejection),
     InvalidMessage,
+    /// The sender's absolute request budget expired before service admission.
+    Expired,
     /// Only a request-private handshake ended; the public listener is intact.
     Disconnected(Status),
 }
