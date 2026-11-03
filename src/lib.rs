@@ -6,6 +6,9 @@
 //! cannot retain reply snapshots charged to the server. Replies have a deadline;
 //! servers keep these workers separate from their lifecycle/ingestion reactor.
 
+pub mod admission;
+pub use admission::{Admission, Rejection};
+
 use core::mem::MaybeUninit;
 use hyper_os::capability_channel::{
     CapabilityChannel, CapabilityDisposition, CapabilityReceiveSlot,
@@ -82,18 +85,26 @@ pub struct Call<T> {
     reply: OwnedHandle<ByteChannelObject>,
 }
 
-pub fn receive<T: DeserializeOwned>(listener: &CapabilityChannel, until: u64) -> Result<Call<T>> {
+pub fn receive<T: DeserializeOwned>(
+    listener: &CapabilityChannel,
+    until: u64,
+) -> Result<Admission<Call<T>>> {
     let mut bytes = [MaybeUninit::uninit(); MAX_REQUEST];
     let mut slots = [CapabilityReceiveSlot::new::<ByteChannelObject>(
         REPLY_RIGHTS,
     )];
-    let message = listener.receive(until, &mut bytes, &mut slots)?;
+    let message = match listener.receive(until, &mut bytes, &mut slots) {
+        Ok(message) => message,
+        Err(error) => return admission::receive_failure(error),
+    };
     if message.capability_count() != 1 {
-        return Err(Error::InvalidResponse);
+        return Ok(Admission::Rejected(Rejection::InvalidMessage));
     }
-    let request = serde_json::from_slice(message.bytes()).map_err(|_| Error::InvalidResponse)?;
+    let Ok(request) = serde_json::from_slice(message.bytes()) else {
+        return Ok(Admission::Rejected(Rejection::InvalidMessage));
+    };
     let reply = slots[0].take()?.ok_or(Error::MissingHandle)?;
-    Ok(Call { request, reply })
+    Ok(Admission::Accepted(Call { request, reply }))
 }
 
 impl<T> Call<T> {
