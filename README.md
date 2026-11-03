@@ -52,3 +52,16 @@ invalid peer framing or response data. `RpcError::Transport` preserves the
 underlying Native error, including trusted SDK contract failures. Low-level
 `send` and `receive` retain Native transport errors and typed admission results.
 Deadline expiry does not undo a command that the service already applied.
+
+## Cancellation and applied outcomes
+
+Transport admission alone does not accept a state change. A service which queues
+a `Call` must move that original call to its state owner and call `is_pending`
+immediately before accepting the operation. Expired calls and closed reply peers
+return false; local clock/wait failures remain errors. That liveness observation
+is the cancellation cutoff. It cannot atomically order a later peer close with
+a later state write.
+
+After acceptance, retain applied state and its resource/retirement owners even
+when the reply cannot be delivered. A timeout or closed channel is an uncertain
+outcome: inspect service state before retrying a non-idempotent operation.

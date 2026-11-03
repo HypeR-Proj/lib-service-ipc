@@ -175,6 +175,30 @@ impl<T> Call<T> {
         self.until
     }
 
+    /// Check cancellation at the state owner's acceptance boundary.
+    ///
+    /// A successful check is the cutoff: later peer closure or expiry cannot
+    /// roll back accepted side effects. Keep their owners and expose state for
+    /// inspection when the reply is lost. Local wait/clock errors remain errors.
+    pub fn is_pending(&self) -> Result<bool> {
+        if hyper_os::time::monotonic_now()?.as_nanoseconds() >= self.until {
+            return Ok(false);
+        }
+        match wait_many(
+            &[WaitItem::new(
+                self.reply.as_handle_ref(),
+                ObjectSignals::<ByteChannelObject>::PEER_CLOSED,
+            )],
+            0,
+        ) {
+            Ok(_) => Ok(false),
+            Err(Error::Status(hyper_os::Status::TIMED_OUT)) => {
+                Ok(hyper_os::time::monotonic_now()?.as_nanoseconds() < self.until)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn respond<R: Serialize>(self, response: &R) -> RpcResult<()> {
         self.respond_until(response, deadline()?)
     }
