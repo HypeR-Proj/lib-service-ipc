@@ -32,3 +32,23 @@ Do not retry every error: report persistent local failure to the listener owner.
 `admission::private_failure` additionally treats closure, timeout and cancellation
 of a request-private handshake as rejection of that request. It must not be used
 to classify failure of the shared listening endpoint.
+
+## Request budgets and errors
+
+`request_until(connector, request, deadline_ns)` uses one absolute monotonic
+budget for local encoding, capability admission and all reply frames. `request`
+chooses a single five-second budget at entry. The request wire is a JSON envelope
+with `deadline_ns` and `request` fields; unknown envelope fields are rejected.
+Expired requests close their private reply owner without entering service policy.
+
+An admitted `Call` exposes `deadline()` for the state owner. `respond_until`
+can tighten this deadline and cannot extend it; ordinary `respond` also caps
+reply I/O at five seconds. Each chunk uses the same deadline. A caller-provided
+infinite deadline does not remove the ordinary server reply cap.
+
+`RpcError::Encoding` identifies local serialization or encoded-size failure,
+including request/response direction. `RpcError::InvalidResponse` identifies
+invalid peer framing or response data. `RpcError::Transport` preserves the
+underlying Native error, including trusted SDK contract failures. Low-level
+`send` and `receive` retain Native transport errors and typed admission results.
+Deadline expiry does not undo a command that the service already applied.
