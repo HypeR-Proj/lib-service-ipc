@@ -7,8 +7,11 @@
 //! servers keep these workers separate from their lifecycle/ingestion reactor.
 
 pub mod admission;
+mod encoding;
 mod error;
 pub use admission::{Admission, Rejection};
+pub use encoding::PreparedResponse;
+use encoding::encode;
 pub use error::{EncodingFailure, MessageKind, RpcError, RpcResult};
 
 use core::mem::MaybeUninit;
@@ -116,23 +119,6 @@ fn reply_error(error: Error) -> RpcError {
     }
 }
 
-fn encode<T: Serialize>(value: &T, message: MessageKind, limit: usize) -> RpcResult<Vec<u8>> {
-    let bytes = serde_json::to_vec(value).map_err(|_| RpcError::Encoding {
-        message,
-        reason: EncodingFailure::Serialization,
-    })?;
-    if bytes.len() > limit {
-        return Err(RpcError::Encoding {
-            message,
-            reason: EncodingFailure::TooLarge {
-                bytes: bytes.len(),
-                limit,
-            },
-        });
-    }
-    Ok(bytes)
-}
-
 /// One accepted request, detached from the listener before running policy.
 pub struct Call<T> {
     pub request: T,
@@ -200,14 +186,24 @@ impl<T> Call<T> {
     }
 
     pub fn respond<R: Serialize>(self, response: &R) -> RpcResult<()> {
-        self.respond_until(response, deadline()?)
+        let until = self.until;
+        self.respond_until(response, until)
     }
 
     /// A server may tighten the reply budget, but cannot extend its caller's.
     pub fn respond_until<R: Serialize>(self, response: &R, until: u64) -> RpcResult<()> {
         let until = until.min(self.until);
         check_deadline(until)?;
-        let bytes = encode(response, MessageKind::Response, MAX_RESPONSE)?;
+        let response = PreparedResponse::encode(response)?;
+        self.respond_prepared_until(response, until)
+    }
+
+    /// Consume the reply owner before publishing any frame. A failed or partial
+    /// send cannot be retried with a second response on the same stream.
+    pub fn respond_prepared_until(self, response: PreparedResponse, until: u64) -> RpcResult<()> {
+        let until = until.min(self.until);
+        check_deadline(until)?;
+        let bytes = response.bytes();
         let mut header = [0; REPLY_MAGIC.len() + 8];
         header[..REPLY_MAGIC.len()].copy_from_slice(REPLY_MAGIC);
         header[REPLY_MAGIC.len()..].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
@@ -264,6 +260,26 @@ mod tests {
     }
 
     #[test]
+    fn only_private_reply_transport_abandonment_is_expected() {
+        use hyper_os::Status;
+        for status in [Status::PEER_CLOSED, Status::TIMED_OUT, Status::CANCELLED] {
+            assert!(RpcError::from(Error::Status(status)).is_reply_abandoned());
+        }
+        for error in [
+            RpcError::from(Error::Status(Status::NO_MEMORY)),
+            RpcError::from(Error::Status(Status::ACCESS_DENIED)),
+            RpcError::from(Error::InvalidResponse),
+            RpcError::InvalidResponse,
+            RpcError::Encoding {
+                message: MessageKind::Response,
+                reason: EncodingFailure::Serialization,
+            },
+        ] {
+            assert!(!error.is_reply_abandoned());
+        }
+    }
+
+    #[test]
     fn local_encoding_failures_preserve_direction_and_reason() {
         for kind in [MessageKind::Request, MessageKind::Response] {
             assert_eq!(
@@ -279,7 +295,7 @@ mod tests {
                 Err(RpcError::Encoding {
                     message: kind,
                     reason: EncodingFailure::TooLarge {
-                        bytes: 18,
+                        bytes: 17,
                         limit: 16
                     },
                 })

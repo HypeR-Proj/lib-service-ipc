@@ -42,9 +42,11 @@ with `deadline_ns` and `request` fields; unknown envelope fields are rejected.
 Expired requests close their private reply owner without entering service policy.
 
 An admitted `Call` exposes `deadline()` for the state owner. `respond_until`
-can tighten this deadline and cannot extend it; ordinary `respond` also caps
-reply I/O at five seconds. Each chunk uses the same deadline. A caller-provided
-infinite deadline does not remove the ordinary server reply cap.
+can tighten this deadline and cannot extend it; ordinary `respond` inherits it
+without adding another timeout. Each chunk uses the same deadline. Services must
+choose an explicit finite reply limit when an infinite caller budget must not
+retain their workers. Journal queries and component-management replies use a
+five-second service limit, separate from the library default request budget.
 
 `RpcError::Encoding` identifies local serialization or encoded-size failure,
 including request/response direction. `RpcError::InvalidResponse` identifies
@@ -65,3 +67,43 @@ a later state write.
 After acceptance, retain applied state and its resource/retirement owners even
 when the reply cannot be delivered. A timeout or closed channel is an uncertain
 outcome: inspect service state before retrying a non-idempotent operation.
+
+## Preparing bounded replies
+
+Request and reply encoding stops at the wire limit while writing JSON. The
+`TooLarge.bytes` value is the observed overflowing length, not a promise to
+measure the complete response. This bounds encoded output, not allocations made
+by the service while constructing its response object, or arbitrary computation
+inside a custom serializer. Deadline checks do not preempt such computation.
+
+`PreparedResponse::encode(&response)` prepares bounded bytes without consuming a
+`Call`. If preparation fails, the service may retain that call and explicitly
+choose a smaller application error or close it. Send with
+`call.respond_prepared_until(prepared, absolute_deadline)`. The effective deadline
+still cannot exceed the caller's. Sending consumes the call before any frame is
+published; a failed partial send cannot be restarted on the same reply stream.
+The convenience `respond`/`respond_until` methods consume the call even when
+preparation fails; use separate preparation when recovery is required.
+
+`RpcError::is_reply_abandoned()` classifies closure, expiry and cancellation of a
+private reply. Other failures deserve bounded service diagnostics, including
+local encoding failures; they must not be silently treated as a normal vanished
+client. This classifier does not apply to errors on a public listener.
+
+## Service-author sequence
+
+1. Prepare state and bounded admission/worker queues before publishing a listener.
+2. Match `Admission`; reject one malformed client without retiring the listener.
+3. Move the accepted `Call` to the state owner. Check `is_pending` immediately
+   before accepting effects; transport admission is an earlier milestone.
+4. Retain applied state independently of the reply and release state locks before
+   encoding or waiting on a client.
+5. Select an absolute service deadline before encoding if a shorter limit is
+   needed. Prepare bounded output while retaining the call when an application
+   fallback is supported; then consume it in one send attempt.
+6. Classify private abandonment separately from local faults. On shutdown, close
+   admission and drain/join workers under the service's explicit finite policy.
+
+Startup readiness, protocol publication and acceptance of an application operation
+are separate contracts. See [component connections](https://github.com/HypeR-Proj/lib-component#connection-failures-and-publication)
+for publication milestones. Reply loss never rolls back accepted side effects.
