@@ -12,7 +12,12 @@ pub enum MessageKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EncodingFailure {
     Serialization,
-    TooLarge { bytes: usize, limit: usize },
+    /// Bytes observed at the first overflowing write, not the complete encoded
+    /// length: encoding stops without constructing the remainder.
+    TooLarge {
+        bytes: usize,
+        limit: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -29,6 +34,20 @@ pub enum RpcError {
 impl From<hyper_os::Error> for RpcError {
     fn from(error: hyper_os::Error) -> Self {
         Self::Transport(error)
+    }
+}
+
+impl RpcError {
+    /// Expected abandonment of one private reply, never a shared-listener error.
+    pub fn is_reply_abandoned(&self) -> bool {
+        matches!(
+            self,
+            Self::Transport(hyper_os::Error::Status(
+                hyper_os::Status::PEER_CLOSED
+                    | hyper_os::Status::TIMED_OUT
+                    | hyper_os::Status::CANCELLED
+            ))
+        )
     }
 }
 
